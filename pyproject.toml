@@ -1,0 +1,30 @@
+[project]
+name = "ragchat"
+version = "0.1.0"
+description = "Chat with your PDFs: chunk, embed, retrieve, answer, admit when it doesn't know"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "chromadb>=1.0",
+    "fastapi>=0.115",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.30",
+    "shared",
+]
+
+[tool.uv.sources]
+shared = { path = "../_shared", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragchat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: calls a real chat and embedding model (needs LLM_MODEL, EMBED_MODEL and an API key)"]
+addopts = "-m 'not live'"
