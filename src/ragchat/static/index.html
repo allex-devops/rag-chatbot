@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat with your documents</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+    section { border: 1px solid #ccc; border-radius: 6px; padding: .75rem 1rem; margin: 1rem 0; }
+    h2 { font-size: 1rem; margin: 0 0 .5rem; }
+    input, button, textarea { font: inherit; }
+    .row { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .row input[type=text], .row input[type=password] { flex: 1; min-width: 8rem; }
+    .msg { white-space: pre-wrap; margin: .5rem 0; }
+    .src, .muted { color: #666; font-size: .85rem; }
+    .badge { font-size: .75rem; padding: 0 .4rem; border-radius: 3px; background: #eee; }
+    .approved { background: #cfe8cf; } .rejected { background: #f3c9c9; }
+    [hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Chat with your documents</h1>
+  <p id="err" class="muted" role="alert"></p>
+
+  <section id="auth">
+    <h2>Sign in</h2>
+    <div class="row">
+      <input id="name" type="text" placeholder="name" autocomplete="username">
+      <input id="pw" type="password" placeholder="password (8+ characters)" autocomplete="current-password">
+      <button id="login">Log in</button><button id="signup">Sign up</button>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <p>Signed in as <b id="who"></b> <button id="logout">Log out</button></p>
+
+    <section>
+      <h2>Your documents</h2>
+      <input id="file" type="file" accept=".pdf,.txt,.md"> <button id="upload">Upload</button>
+      <ul id="docs"></ul>
+    </section>
+
+    <section>
+      <h2>Ask</h2>
+      <div id="log"></div>
+      <div class="row">
+        <input id="q" type="text" placeholder="Ask about your documents">
+        <button id="ask">Ask</button><button id="find">Search only</button>
+      </div>
+    </section>
+
+    <section id="reviews" hidden>
+      <h2>Answers waiting for review</h2>
+      <div id="queue"></div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let conv = null;
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, opts);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail && body.detail.map ? body.detail.map(d => d.msg).join("; ") : (body.detail || res.status));
+      return body;
+    }
+    const post = (path, data) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+    const guard = (fn) => async () => { $("err").textContent = ""; try { await fn(); } catch (e) { $("err").textContent = e.message; } };
+    // textContent everywhere: document text and model output are untrusted, never innerHTML
+    function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+    async function refresh() {
+      let me;
+      try { me = await api("/me"); } catch { $("auth").hidden = false; $("app").hidden = true; return; }
+      $("auth").hidden = true; $("app").hidden = false; $("who").textContent = me.name + (me.role === "expert" ? " (expert)" : "");
+      $("reviews").hidden = me.role !== "expert";
+      const docs = await api("/documents");
+      $("docs").replaceChildren(...docs.map(d => el("li", "", `${d.filename} (${d.chunks} chunks)`)));
+      if (me.role === "expert") await loadQueue();
+    }
+
+    function sources(list) { return list.length ? "Sources: " + list.map(s => `${s.source} p.${s.page}`).join(", ") : ""; }
+
+    async function loadQueue() {
+      const items = await api("/reviews");
+      $("queue").replaceChildren(...items.map(a => {
+        const box = el("div", "msg");
+        box.append(el("b", "", "Q: " + a.question), el("div", "", a.answer), el("div", "src", sources(a.sources)));
+        const note = el("input", ""); note.type = "text"; note.placeholder = "note (optional)";
+        for (const decision of ["approved", "rejected"]) {
+          const b = el("button", "", decision === "approved" ? "Approve" : "Reject");
+          b.onclick = guard(async () => { await post(`/reviews/${a.answer_id}`, { decision, note: note.value }); await loadQueue(); });
+          box.append(b);
+        }
+        box.append(note);
+        return box;
+      }));
+    }
+
+    $("login").onclick = guard(async () => { await post("/login", { name: $("name").value, password: $("pw").value }); await refresh(); });
+    $("signup").onclick = guard(async () => { await post("/signup", { name: $("name").value, password: $("pw").value }); await refresh(); });
+    $("logout").onclick = guard(async () => { await post("/logout", {}); conv = null; $("log").replaceChildren(); await refresh(); });
+
+    $("upload").onclick = guard(async () => {
+      const f = $("file").files[0];
+      if (!f) throw new Error("choose a file first");
+      const form = new FormData(); form.append("file", f);
+      await api("/documents", { method: "POST", body: form });
+      $("file").value = "";
+      await refresh();
+    });
+
+    $("ask").onclick = guard(async () => {
+      const q = $("q").value.trim(); if (!q) return;
+      $("q").value = "";
+      $("log").append(el("div", "msg", "You: " + q));
+      const r = await post("/chat", { question: q, conversation_id: conv });
+      conv = r.conversation_id;
+      const box = el("div", "msg", r.answer);
+      box.append(el("div", "src", sources(r.sources)));
+      $("log").append(box);
+    });
+
+    $("find").onclick = guard(async () => {
+      const q = $("q").value.trim(); if (!q) return;
+      const hits = await api("/search?q=" + encodeURIComponent(q));
+      $("log").append(el("div", "msg", "Search: " + q));
+      for (const h of hits) $("log").append(el("div", "msg", `${h.source} p.${h.page} (${h.score})\n${h.text}`));
+    });
+
+    refresh();
+  </script>
+</body>
+</html>
