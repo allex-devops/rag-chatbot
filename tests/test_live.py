@@ -1,29 +1,21 @@
 """Calls a real chat model and embedding model, so it uses a few API tokens.
 
-Needs LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and EMBED_MODEL (see .env.example), plus the shared papers
-and question set:
+Needs LLM_BASE_URL, LLM_API_KEY, LLM_MODEL and EMBED_MODEL (see .env.example):
 
     uv run --env-file .env pytest -m live -s
 """
-import json
-import statistics
-
+import fitz
 import pytest
-from shared.corpus import pdf_path
-from shared.paths import DATA_DIR
+from fastapi.testclient import TestClient
 
 from ragchat.ingest import chunks_from_file
 from ragchat.rag import ConfigError, answer, embedder, llm_from_env
 from ragchat.store import Store
+from ragchat.webapp import create_app
 
 pytestmark = pytest.mark.live
-QUESTIONS = DATA_DIR / "evalset" / "questions.jsonl"
-OFF_TOPIC = [
-    "What is the best recipe for banana bread?",
-    "Who won the 2018 football world cup?",
-    "How do I change a flat tyre on a bicycle?",
-    "What is the capital of Mongolia?",
-]
+
+POLICY = "The office is closed on public holidays. Staff get 25 days of paid leave a year."
 
 
 @pytest.fixture(scope="module")
@@ -34,58 +26,41 @@ def llm():
         pytest.skip(str(e))
 
 
-def test_real_models_find_the_right_paper_and_score_unrelated_questions_lower(tmp_path, llm):
-    if not QUESTIONS.exists():
-        pytest.skip("question set not generated yet")
-    rows = [json.loads(line) for line in QUESTIONS.read_text().splitlines()][:12]
-    if len(rows) < 12:
-        pytest.skip("fewer than 12 questions so far")
+def make_pdf(path, text):
+    doc = fitz.open()
+    doc.new_page().insert_textbox(fitz.Rect(50, 50, 550, 780), text, fontsize=12)
+    doc.save(path)
+    doc.close()
 
+
+def test_real_model_answers_from_a_document_and_scores_off_topic_lower(tmp_path, llm):
+    make_pdf(tmp_path / "policy.pdf", POLICY)
     embed = embedder(llm)
     store = Store(tmp_path / "idx", embed_model=llm.embed_model)
-    for paper in {r["paper_id"] for r in rows}:
-        chunks = chunks_from_file(pdf_path(paper))
-        store.add(chunks, embed([c.text for c in chunks], "document"))  # cached, so this is quick
+    chunks = chunks_from_file(tmp_path / "policy.pdf")
+    store.add(chunks, embed([c.text for c in chunks], "document"))
 
-    right, on_topic, answers = 0, [], []
-    for r in rows:
-        a = answer(r["question"], store, llm, embed, min_score=0.0)
-        top = a.sources[0]
-        right += top.source == pdf_path(r["paper_id"]).name
-        on_topic.append(top.score)
-        answers.append(a.text)
-
-    off_topic = [answer(q, store, llm, embed, min_score=0.0).sources[0].score for q in OFF_TOPIC]
-    print(f"\nright paper ranked first: {right}/{len(rows)}")
-    print(f"top score on-topic:  min {min(on_topic):.2f}  median {statistics.median(on_topic):.2f}  max {max(on_topic):.2f}")
-    print(f"top score off-topic: min {min(off_topic):.2f}  median {statistics.median(off_topic):.2f}  max {max(off_topic):.2f}")
-    print("sample answer:", answers[0][:200].replace("\n", " "))
-    (DATA_DIR / "evalset" / "live_scores.json").write_text(json.dumps({"on_topic": on_topic, "off_topic": off_topic}))
-
-    assert right / len(rows) >= 0.6
-    assert all(a.strip() for a in answers)
+    on_topic = answer("How many days of paid leave do staff get?", store, llm, embed, min_score=0.0)
+    off_topic = answer("What is the capital of Mongolia?", store, llm, embed, min_score=0.0)
+    print(f"\non-topic: {on_topic.text!r} (top score {on_topic.sources[0].score:.2f})")
+    print(f"off-topic top score: {off_topic.sources[0].score:.2f}")
+    assert "25" in on_topic.text
+    assert on_topic.sources[0].score > off_topic.sources[0].score
 
 
 def test_web_app_end_to_end_with_real_models(tmp_path, llm):
-    """Sign up, upload a real paper, ask about it: everything the browser would do, minus the browser."""
-    from fastapi.testclient import TestClient
-
-    from ragchat.webapp import create_app
-
-    if not QUESTIONS.exists():
-        pytest.skip("question set not generated yet")
-    row = json.loads(QUESTIONS.read_text().splitlines()[0])
-    pdf = pdf_path(row["paper_id"])
-
+    """Sign up, upload a document, ask about it, then a follow-up: everything the browser would do."""
+    pdf = tmp_path / "policy.pdf"
+    make_pdf(pdf, POLICY)
     app = create_app(tmp_path / "data", llm=llm, embed_model=llm.embed_model)
     me = TestClient(app)
     assert me.post("/signup", json={"name": "livetest", "password": "correct horse battery"}).status_code == 201
     up = me.post("/documents", files={"file": (pdf.name, pdf.read_bytes(), "application/pdf")})
-    assert up.status_code == 201 and up.json()["chunks"] > 5
+    assert up.status_code == 201 and up.json()["chunks"] > 0
 
-    r = me.post("/chat", json={"question": row["question"]}).json()
-    print(f"\nQ: {row['question']}\nA: {r['answer'][:300]!r}\nsources: {r['sources'][:2]}")
-    assert r["grounded"] and r["answer"].strip()
+    r = me.post("/chat", json={"question": "How many days of paid leave do staff get?"}).json()
+    print(f"\nQ: How many days of paid leave do staff get?\nA: {r['answer'][:300]!r}\nsources: {r['sources'][:2]}")
+    assert r["grounded"] and "25" in r["answer"]
     assert r["sources"][0]["source"] == pdf.name
 
     follow_up = me.post("/chat", json={"question": "Can you say that more briefly?", "conversation_id": r["conversation_id"]}).json()

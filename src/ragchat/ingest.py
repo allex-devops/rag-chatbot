@@ -16,6 +16,6 @@ def chunks_from_file(path: Path, size: int = 800, overlap: int = 120) -> list[Ch
     out = []
     for page, text in read_pages(path):
         for i, piece in enumerate(chunk_text(text, size, overlap)):
-            # ids are stable, so ingesting the same file twice replaces its chunks instead of doubling them . up for debate: should we include the page number in the id? it would make it easier to find the original text, but it would also make the ids less stable if we change the chunking algorithm
+            # stable ids mean re-ingesting the same file replaces its chunks instead of adding duplicates
             out.append(Chunk(id=f"{path.name}:{page}:{i}", text=piece, source=path.name, page=page))
     return out

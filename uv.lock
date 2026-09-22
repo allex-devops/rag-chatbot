@@ -1028,8 +1028,10 @@ source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "numpy" },
+    { name = "pymupdf" },
     { name = "python-multipart" },
-    { name = "shared" },
     { name = "uvicorn" },
 ]
 
@@ -1042,8 +1044,10 @@ dev = [
 requires-dist = [
     { name = "chromadb", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pymupdf", specifier = ">=1.24" },
     { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "shared", editable = "../_shared" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -1127,26 +1131,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/3a/f0ee4d4dde9d3b69dedf1b5f74e7a40017046d55052d173e418c6a94f960/rpds_py-2026.6.3-cp312-cp312-win_amd64.whl", hash = "sha256:2c958bf94822e9290a40aaf2a822d4bc5c88099093e3948ad6c571eca9272e5f", size = 220394, upload-time = "2026-06-30T07:15:33.359Z" },
     { url = "https://files.pythonhosted.org/packages/f3/83/3382fe37f809b59f02aac04dbc4e765b480b46ee0227ed516e3bdc4d3dfc/rpds_py-2026.6.3-cp312-cp312-win_arm64.whl", hash = "sha256:22bffe6042b9bcb0822bcd1955ec00e245daf17b4344e4ed8e9551b976b63e96", size = 215753, upload-time = "2026-06-30T07:15:34.778Z" },
 ]
-
-[[package]]
-name = "shared"
-version = "0.1.0"
-source = { editable = "../_shared" }
-dependencies = [
-    { name = "httpx" },
-    { name = "numpy" },
-    { name = "pymupdf" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "pymupdf", specifier = ">=1.24" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "shellingham"
